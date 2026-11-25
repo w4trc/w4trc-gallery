@@ -1,0 +1,15 @@
+{
+  "name": "w4trc-gallery",
+  "private": true,
+  "description": "Photo gallery backend for w4trc.org: upload form, admin, image processing and the album API",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply w4trc-gallery --remote",
+    "db:migrate:local": "wrangler d1 migrations apply w4trc-gallery --local"
+  },
+  "devDependencies": {
+    "wrangler": "^4.90.1"
+  }
+}

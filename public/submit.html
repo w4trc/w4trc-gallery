@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Share Your Photos — W4TRC</title>
+  <meta name="description" content="Send your photos from Kingsport Amateur Radio Club events for the club gallery." />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+  <style>
+    .previews {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+      gap: 0.5rem;
+      margin: -0.25rem 0 1.25rem;
+    }
+    .previews img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: -0.5rem 0 1rem; }
+    .status { margin-top: 1rem; }
+    .done { text-align: center; padding: 1rem 0; }
+    .done h2 { color: var(--accent); font-size: 1.5rem; }
+    #turnstile { margin: 0.5rem 0 1rem; min-height: 65px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Share Your Photos</h1>
+
+    <div class="notice">
+      Got pictures from Field Day, a POTA activation, a meeting or a special event? Send them in and
+      we'll add the best ones to the <a href="https://w4trc.org/gallery/">club photo gallery</a>.
+      Photos may also be used in the newsletter or on club social media.
+    </div>
+
+    <form id="photo-form" novalidate>
+      <h3>About You</h3>
+
+      <label>
+        Name
+        <input name="name" required autocomplete="name" />
+      </label>
+
+      <label>
+        Callsign <span class="optional">Optional</span>
+        <input name="callsign" autocomplete="off" autocapitalize="characters" />
+      </label>
+
+      <label>
+        Email
+        <input name="email" type="email" required autocomplete="email" />
+      </label>
+      <p class="hint">Only used if we have a question about your photos. It isn't published.</p>
+
+      <h3>The Photos</h3>
+
+      <label>
+        Which event are they from?
+        <input name="event" required placeholder="e.g. Field Day 2026, December meeting, Bays Mountain POTA" />
+      </label>
+
+      <label>
+        Date of the event <span class="optional">Optional</span>
+        <input name="event_date" type="date" />
+      </label>
+
+      <label>
+        Anything we should know? <span class="optional">Optional</span>
+        <textarea name="notes" rows="3" placeholder="Who's in the photos, what's happening, which ones are your favorites…"></textarea>
+      </label>
+
+      <label>
+        Photos
+        <input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple required />
+      </label>
+      <p class="hint" id="file-hint">Up to 50 photos, 20 MB each. JPEG, PNG or WebP.</p>
+      <div class="previews" id="previews"></div>
+
+      <label class="checkbox-label">
+        <input name="consent" type="checkbox" value="yes" required />
+        I took these photos or have the photographer's permission, and the club may publish them.
+      </label>
+
+      <div id="turnstile"></div>
+
+      <button type="submit" id="submit-btn">Upload Photos</button>
+      <div class="error-msg" id="error" role="alert"></div>
+      <div class="status" id="status" hidden>
+        <progress id="progress" value="0" max="1"></progress>
+        <p id="status-text" aria-live="polite"></p>
+      </div>
+    </form>
+
+    <div class="done" id="done" hidden>
+      <h2>Thank you!</h2>
+      <p id="done-text"></p>
+      <p><a href="/submit">Send more photos</a> · <a href="https://w4trc.org/gallery/">Visit the gallery</a></p>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const form = $('photo-form');
+    let config = { maxFiles: 50, maxFileBytes: 20 * 1024 * 1024, turnstileSiteKey: '' };
+    let turnstileToken = '';
+    let widgetId;
+
+    fetch('/api/config').then((r) => r.json()).then((c) => {
+      config = c;
+      const render = () => {
+        if (!config.turnstileSiteKey) return;
+        widgetId = turnstile.render('#turnstile', {
+          sitekey: config.turnstileSiteKey,
+          theme: 'dark',
+          callback: (t) => (turnstileToken = t),
+          'expired-callback': () => (turnstileToken = ''),
+        });
+      };
+      if (window.turnstile) render();
+      else document.querySelector('script[src*="turnstile"]').addEventListener('load', render);
+    });
+
+    form.photos.addEventListener('change', () => {
+      const box = $('previews');
+      box.querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
+      box.replaceChildren(
+        ...[...form.photos.files].slice(0, 60).map((f) => {
+          const img = new Image();
+          img.src = URL.createObjectURL(f);
+          img.alt = f.name;
+          return img;
+        })
+      );
+      const n = form.photos.files.length;
+      $('file-hint').textContent = n
+        ? `${n} photo${n === 1 ? '' : 's'} selected.`
+        : 'Up to 50 photos, 20 MB each. JPEG, PNG or WebP.';
+    });
+
+    function validate() {
+      const files = [...form.photos.files];
+      if (!form.name.value.trim()) return 'Please enter your name.';
+      if (!form.email.checkValidity() || !form.email.value) return 'Please enter a valid email address.';
+      if (!form.event.value.trim()) return 'Please tell us which event the photos are from.';
+      if (!files.length) return 'Please choose at least one photo.';
+      if (files.length > config.maxFiles) return `Please choose ${config.maxFiles} photos or fewer.`;
+      const bad = files.find((f) => !['image/jpeg', 'image/png', 'image/webp'].includes(f.type));
+      if (bad) return `${bad.name} isn't a JPEG, PNG or WebP photo.`;
+      const big = files.find((f) => f.size > config.maxFileBytes);
+      if (big) return `${big.name} is larger than 20 MB.`;
+      if (!form.consent.checked) return 'Please confirm you have permission to share these photos.';
+      if (config.turnstileSiteKey && !turnstileToken) return 'Please complete the bot check.';
+      return '';
+    }
+
+    async function call(url, options) {
+      const res = await fetch(url, options);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Upload failed (HTTP ${res.status}).`);
+      return body;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('error').textContent = '';
+      const problem = validate();
+      if (problem) return ($('error').textContent = problem);
+
+      const files = [...form.photos.files];
+      const btn = $('submit-btn');
+      btn.disabled = true;
+      form.querySelectorAll('input, textarea').forEach((el) => (el.disabled = true));
+      $('status').hidden = false;
+      $('progress').max = files.length;
+      $('progress').value = 0;
+      $('status-text').textContent = 'Starting upload…';
+
+      try {
+        const { id, token } = await call('/api/submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.name.value,
+            callsign: form.callsign.value,
+            email: form.email.value,
+            event: form.event.value,
+            event_date: form.event_date.value,
+            notes: form.notes.value,
+            file_count: files.length,
+            consent: form.consent.checked,
+            turnstile: turnstileToken,
+          }),
+        });
+
+        const qs = `token=${encodeURIComponent(token)}`;
+        for (const [i, file] of files.entries()) {
+          $('status-text').textContent = `Uploading photo ${i + 1} of ${files.length}…`;
+          await call(`/api/submissions/${id}/files?${qs}&name=${encodeURIComponent(file.name)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type },
+            body: file,
+          });
+          $('progress').value = i + 1;
+        }
+
+        const { count } = await call(`/api/submissions/${id}/complete?${qs}`, { method: 'POST' });
+        form.hidden = true;
+        $('done').hidden = false;
+        $('done-text').textContent =
+          `We received ${count} photo${count === 1 ? '' : 's'}. An officer will review them and add them to the gallery.`;
+      } catch (err) {
+        $('error').textContent = err.message + ' Please try again.';
+        $('status').hidden = true;
+        btn.disabled = false;
+        form.querySelectorAll('input, textarea').forEach((el) => (el.disabled = false));
+        if (widgetId !== undefined) {
+          turnstile.reset(widgetId);
+          turnstileToken = '';
+        }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+// W4TRC photo gallery Worker: upload form, admin page, image processing and
+// the album API that w4trc.org reads when it builds.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "w4trc-gallery",
+  // The club's Cloudflare account (Webmaster@w4trc.org)
+  "account_id": "4b724b576c4285b15dfd8aa32fc83af7",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-23",
+  // Workers Logs is off: with it on (2026-11-25), every error response the
+  // Worker returned from a caught exception failed in production with error
+  // 1101 "Callback returned incorrect type; expected 'Promise'". It worked in
+  // local and remote dev. `wrangler tail` still shows live logs.
+  "observability": { "enabled": false },
+
+  // public/ holds the submit and admin pages. Requests that don't match a
+  // file there go to the Worker.
+  "assets": { "directory": "./public", "html_handling": "drop-trailing-slash" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "w4trc-gallery",
+      "database_id": "60a0fcdc-db8a-4f02-84db-93026d1b3a3a",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    // Public, served at photos.w4trc.org: albums/<album>/{t,d}/<file>.webp
+    { "binding": "PHOTOS", "bucket_name": "w4trc-photos" },
+    // Private: originals sent through /submit, waiting for review
+    { "binding": "INBOX", "bucket_name": "w4trc-photo-inbox" }
+  ],
+  "images": { "binding": "IMAGES" },
+
+  "vars": {
+    "SITE_URL": "https://w4trc.org",
+    "PHOTOS_URL": "https://photos.w4trc.org",
+    // Public key of the Turnstile widget for this Worker's hostname
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAGS2u_gm3FL8kpJJ"
+  }
+  // Secrets (wrangler secret put <NAME>):
+  //   ADMIN_KEY             admin page password
+  //   TURNSTILE_SECRET_KEY  Turnstile secret for the submit form
+  //   DISCORD_WEBHOOK_URL   optional: notify officers of new submissions
+  //   DEPLOY_HOOK_URL       optional: URL that starts a w4trc.org rebuild
+}

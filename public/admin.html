@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Gallery Admin – W4TRC</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+    .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+    .tabs button { background: none; color: var(--muted); border-radius: 8px 8px 0 0; font-weight: 600; }
+    .tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+    .login { max-width: 360px; }
+    .flash { background: var(--surface-2); border: 1px solid var(--accent); border-radius: 8px; padding: 0.6rem 0.9rem; margin-bottom: 1rem; }
+
+    .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .card-head { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: baseline; }
+    .badge { font-size: 0.7rem; border-radius: 999px; padding: 0.05rem 0.55rem; border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .badge.pending { color: var(--accent); border-color: var(--accent); }
+    .badge.approved { color: #86efac; border-color: #86efac; }
+    .notes { white-space: pre-wrap; font-size: 0.9rem; margin: 0 0 0.75rem; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
+    .tile { position: relative; border-radius: 8px; overflow: hidden; background: var(--surface); border: 2px solid transparent; }
+    .tile img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+    .tile.picked { border-color: var(--accent); }
+    .tile.dim img { opacity: 0.3; }
+    .tile input[type="checkbox"] { position: absolute; top: 0.4rem; left: 0.4rem; width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--accent); }
+    .tile .badge { position: absolute; bottom: 0.35rem; left: 0.35rem; background: rgba(0,0,0,0.7); }
+
+    .approve-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.75rem; align-items: end; }
+    .approve-row label { margin: 0; }
+    .new-album { display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem; margin-top: 0.75rem; }
+    .new-album label { margin: 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+
+    .album-row { display: flex; gap: 1rem; align-items: center; cursor: pointer; }
+    .album-row img { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; background: var(--surface); }
+    .album-row:hover h2 { color: var(--accent); }
+    .editor-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 0 1rem; }
+    .editor-fields .full { grid-column: 1 / -1; }
+    .photo-edit { background: var(--surface); border-radius: 8px; overflow: hidden; }
+    .photo-edit img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+    .photo-edit .fields { padding: 0.5rem; }
+    .photo-edit input { font-size: 0.8rem; padding: 0.35rem 0.5rem; margin-top: 0.2rem; }
+    .photo-edit label { font-size: 0.75rem; margin-bottom: 0.4rem; color: var(--muted); }
+    .photo-edit .row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .photo-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+    .is-cover { color: var(--accent); font-size: 0.75rem; font-weight: 700; }
+    @media (max-width: 640px) { .approve-row, .new-album, .editor-fields { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container wide">
+    <header>
+      <div>
+        <h1>Gallery Admin</h1>
+        <p class="muted small" style="margin:0">Photos for <a href="https://w4trc.org/gallery/">w4trc.org/gallery</a> &middot; upload form at <a href="/submit">/submit</a></p>
+      </div>
+      <div class="toolbar" id="toolbar" hidden>
+        <button class="ghost" id="rebuild-btn" title="Rebuild w4trc.org so changes go live now">Publish changes</button>
+        <button class="ghost" id="logout-btn">Sign out</button>
+      </div>
+    </header>
+
+    <form class="login" id="login-form" hidden>
+      <label>Password <input type="password" name="key" autocomplete="current-password" required /></label>
+      <button type="submit">Sign in</button>
+      <p class="error-msg" id="login-error"></p>
+    </form>
+
+    <div id="app" hidden>
+      <div class="flash" id="flash" hidden role="status"></div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="review" aria-selected="true">Review <span id="pending-count"></span></button>
+        <button role="tab" data-tab="albums" aria-selected="false">Albums</button>
+      </nav>
+      <section id="review"></section>
+      <section id="albums" hidden></section>
+    </div>
+  </div>
+
+  <script>
+    const KEY_STORE = 'w4trc_gallery_admin_key';
+    const $ = (id) => document.getElementById(id);
+    let albums = [];
+    let photosUrl = '';
+    let openAlbum = null;
+    let blobUrls = [];
+
+    const getKey = () => { try { return sessionStorage.getItem(KEY_STORE) || ''; } catch { return ''; } };
+    const setKey = (k) => { try { k ? sessionStorage.setItem(KEY_STORE, k) : sessionStorage.removeItem(KEY_STORE); } catch {} };
+    const auth = () => ({ Authorization: 'Bearer ' + getKey() });
+
+    async function api(method, path, body) {
+      const res = await fetch('/api/admin' + path, {
+        method,
+        headers: { ...auth(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(out.error || 'HTTP ' + res.status);
+        err.status = res.status;
+        throw err;
+      }
+      return out;
+    }
+
+    const el = (tag, props = {}, ...children) => {
+      const node = Object.assign(document.createElement(tag), props);
+      node.append(...children.flat().filter((c) => c != null && c !== false));
+      return node;
+    };
+
+    function flash(msg) {
+      $('flash').textContent = msg;
+      $('flash').hidden = !msg;
+    }
+
+    const today = () => new Date().toISOString().slice(0, 10);
+    const thumbUrl = (slug, file) => `${photosUrl}/albums/${slug}/t/${file}.webp`;
+
+    // ---- Sign in ----------------------------------------------------------
+
+    function showLogin(msg = '') {
+      $('app').hidden = true;
+      $('toolbar').hidden = true;
+      $('login-form').hidden = false;
+      $('login-error').textContent = msg;
+      $('login-form').key.focus();
+    }
+
+    async function start() {
+      try {
+        await Promise.all([loadAlbums(), loadReview()]);
+      } catch (err) {
+        if (err.status === 401) { setKey(''); return showLogin('Wrong password.'); }
+        return showLogin(err.message);
+      }
+      $('login-form').hidden = true;
+      $('app').hidden = false;
+      $('toolbar').hidden = false;
+    }
+
+    $('login-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      setKey(e.target.key.value);
+      e.target.reset();
+      start();
+    });
+    $('logout-btn').addEventListener('click', () => { setKey(''); showLogin(); });
+
+    document.querySelectorAll('[role=tab]').forEach((tab) =>
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('[role=tab]').forEach((t) => t.setAttribute('aria-selected', t === tab));
+        $('review').hidden = tab.dataset.tab !== 'review';
+        $('albums').hidden = tab.dataset.tab !== 'albums';
+      })
+    );
+
+    async function publish(auto = false) {
+      try {
+        const out = await api('POST', '/rebuild');
+        flash(out.message);
+      } catch (err) {
+        flash((auto ? 'Saved, but the site rebuild failed: ' : 'Rebuild failed: ') + err.message);
+      }
+    }
+    $('rebuild-btn').addEventListener('click', () => publish());
+
+    // ---- Review -----------------------------------------------------------
+
+    async function loadThumb(img, uploadId) {
+      const res = await fetch(`/api/admin/uploads/${uploadId}/preview`, { headers: auth() });
+      if (!res.ok) return;
+      const url = URL.createObjectURL(await res.blob());
+      blobUrls.push(url);
+      img.src = url;
+    }
+
+    function albumOptions(selected) {
+      return [
+        el('option', { value: '', textContent: 'Choose an album…' }),
+        el('option', { value: '__new', textContent: '+ New album', selected: selected === '__new' }),
+        ...albums.map((a) => el('option', { value: a.slug, textContent: `${a.title} (${a.date.slice(0, 4)})`, selected: a.slug === selected })),
+      ];
+    }
+
+    async function loadReview() {
+      const subs = await api('GET', '/submissions');
+      blobUrls.forEach((u) => URL.revokeObjectURL(u));
+      blobUrls = [];
+      const pendingPhotos = subs.reduce((n, s) => n + s.uploads.filter((u) => u.status === 'pending').length, 0);
+      $('pending-count').textContent = pendingPhotos ? `(${pendingPhotos})` : '';
+      $('review').replaceChildren(
+        subs.length
+          ? el('p', { className: 'muted small', textContent: 'Tick the photos to keep, choose an album, and approve. Unticked photos are rejected.' })
+          : el('p', { className: 'muted', textContent: 'Nothing waiting for review.' }),
+        ...subs.map(submissionCard)
+      );
+    }
+
+    function submissionCard(s) {
+      const pending = s.uploads.filter((u) => u.status === 'pending');
+      const when = new Date(s.created_at.replace(' ', 'T') + 'Z').toLocaleString();
+      const who = s.callsign ? `${s.name} (${s.callsign})` : s.name;
+
+      const tiles = s.uploads.map((u) => {
+        const img = el('img', { alt: u.original_name, loading: 'lazy' });
+        const isPending = u.status === 'pending';
+        const box = isPending ? el('input', { type: 'checkbox', checked: true, title: 'Keep this photo' }) : null;
+        const tile = el('div', { className: `tile ${isPending ? 'picked' : 'dim'}`, title: u.original_name },
+          img, box, !isPending && el('span', { className: `badge ${u.status}`, textContent: u.status }));
+        if (box) {
+          box.addEventListener('change', () => { tile.classList.toggle('picked', box.checked); update(); });
+          tile.addEventListener('click', (e) => { if (e.target !== box) { box.checked = !box.checked; box.dispatchEvent(new Event('change')); } });
+        }
+        loadThumb(img, u.id);
+        return { u, box, tile };
+      });
+
+      const select = el('select', {}, albumOptions(''));
+      const newTitle = el('input', { value: s.event });
+      const newDate = el('input', { type: 'date', value: s.event_date || today() });
+      const newBox = el('div', { className: 'new-album', hidden: true },
+        el('label', {}, 'New album title', newTitle),
+        el('label', {}, 'Date', newDate));
+      select.addEventListener('change', () => { newBox.hidden = select.value !== '__new'; update(); });
+
+      const go = el('button', { type: 'button' });
+      const status = el('span', { className: 'muted small' });
+      function update() {
+        const keep = tiles.filter((t) => t.box?.checked).length;
+        const drop = tiles.filter((t) => t.box && !t.box.checked).length;
+        go.textContent = keep ? `Add ${keep} photo${keep === 1 ? '' : 's'}${drop ? `, reject ${drop}` : ''}` : `Reject ${drop}`;
+        go.disabled = !pending.length || (keep > 0 && !select.value);
+      }
+      update();
+
+      go.addEventListener('click', async () => {
+        const keep = tiles.filter((t) => t.box?.checked);
+        const drop = tiles.filter((t) => t.box && !t.box.checked);
+        go.disabled = true;
+        try {
+          let album = select.value;
+          if (keep.length && album === '__new') {
+            ({ slug: album } = await api('POST', '/albums', { title: newTitle.value, date: newDate.value }));
+          }
+          for (const [i, t] of keep.entries()) {
+            status.textContent = `Adding photo ${i + 1} of ${keep.length}…`;
+            await api('POST', `/uploads/${t.u.id}/approve`, { album });
+          }
+          for (const t of drop) await api('PATCH', `/uploads/${t.u.id}`, { status: 'rejected' });
+          status.textContent = '';
+          await Promise.all([loadAlbums(), loadReview()]);
+          if (keep.length) await publish(true);
+          else flash(`Rejected ${drop.length} photo${drop.length === 1 ? '' : 's'}.`);
+        } catch (err) {
+          status.textContent = '';
+          flash(err.message);
+          go.disabled = false;
+          loadReview();
+        }
+      });
+
+      const del = el('button', { type: 'button', className: 'danger sm', textContent: 'Delete submission' });
+      del.addEventListener('click', async () => {
+        if (!confirm(`Delete submission #${s.id} and its original files? Photos already added to albums stay. This can't be undone.`)) return;
+        try { await api('DELETE', `/submissions/${s.id}`); } catch (err) { flash(err.message); }
+        loadReview();
+      });
+
+      return el('article', { className: 'card' },
+        el('div', { className: 'card-head' },
+          el('h2', { textContent: `#${s.id} · ${s.event}` }),
+          el('span', { className: `badge ${s.status}`, textContent: s.status })),
+        el('p', { className: 'muted small', textContent:
+          `${who} · ${s.email} · ${s.uploads.length} of ${s.expected_files} photos` + (s.event_date ? ` · event ${s.event_date}` : '') + ` · sent ${when}` }),
+        s.notes && el('p', { className: 'notes', textContent: s.notes }),
+        el('div', { className: 'grid' }, tiles.map((t) => t.tile)),
+        pending.length && el('div', { className: 'approve-row' }, el('label', {}, 'Album', select), el('span'), go),
+        newBox,
+        el('div', { className: 'actions' }, status, el('span', { style: 'flex:1' }), del));
+    }
+
+    // ---- Albums -----------------------------------------------------------
+
+    async function loadAlbums() {
+      const out = await api('GET', '/albums');
+      albums = out.albums;
+      photosUrl = out.photosUrl;
+      renderAlbums();
+    }
+
+    function renderAlbums() {
+      if (openAlbum) {
+        const a = albums.find((x) => x.slug === openAlbum);
+        if (a) return $('albums').replaceChildren(albumEditor(a));
+        openAlbum = null;
+      }
+
+      const title = el('input', { required: true, placeholder: 'e.g. Field Day 2027' });
+      const date = el('input', { type: 'date', required: true, value: today() });
+      const create = el('form', { className: 'card' },
+        el('h2', { textContent: 'New album' }),
+        el('div', { className: 'new-album' }, el('label', {}, 'Title', title), el('label', {}, 'Date', date)),
+        el('div', { className: 'actions' }, el('button', { type: 'submit', className: 'sm', textContent: 'Create album' })));
+      create.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const { slug } = await api('POST', '/albums', { title: title.value, date: date.value });
+          openAlbum = slug;
+          await loadAlbums();
+          flash('Album created. Add photos by sending them through /submit and approving them here.');
+        } catch (err) { flash(err.message); }
+      });
+
+      $('albums').replaceChildren(
+        ...albums.map((a) => {
+          const cover = a.photos.find((p) => p.id === a.cover_photo_id) ?? a.photos[0];
+          const row = el('div', { className: 'card album-row', tabIndex: 0, role: 'button' },
+            cover ? el('img', { src: thumbUrl(a.slug, cover.file), alt: '' }) : el('img', { alt: '' }),
+            el('div', {},
+              el('h2', { textContent: a.title }),
+              el('p', { className: 'muted small', style: 'margin:0', textContent:
+                `${a.date} · ${a.photos.length} photos · /gallery/${a.slug}/` + (a.published ? '' : ' · hidden') })));
+          const open = () => { openAlbum = a.slug; renderAlbums(); };
+          row.addEventListener('click', open);
+          row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+          return row;
+        }),
+        create);
+    }
+
+    function albumEditor(a) {
+      const f = {
+        title: el('input', { value: a.title }),
+        date: el('input', { type: 'date', value: a.date }),
+        description: el('textarea', { rows: 3, value: a.description }),
+        published: el('input', { type: 'checkbox', checked: !!a.published }),
+      };
+      const save = el('button', { type: 'submit', className: 'sm', textContent: 'Save details' });
+      const details = el('form', { className: 'card' },
+        el('div', { className: 'editor-fields' },
+          el('label', {}, 'Title', f.title),
+          el('label', {}, 'Date', f.date),
+          el('label', { className: 'full' }, 'Description ', el('span', { className: 'optional', textContent: 'Optional' }), f.description),
+          el('label', { className: 'checkbox-label full' }, f.published, 'Show this album on the website')),
+        el('div', { className: 'actions' }, save));
+      details.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api('PATCH', `/albums/${a.slug}`, {
+            title: f.title.value, date: f.date.value, description: f.description.value, published: f.published.checked,
+          });
+          await loadAlbums();
+          flash('Album saved. Use “Publish changes” when you are done editing.');
+        } catch (err) { flash(err.message); }
+      });
+
+      const coverId = a.cover_photo_id ?? a.photos[0]?.id;
+      const photos = a.photos.map((p, i) => {
+        const alt = el('input', { value: p.alt, placeholder: 'Describe the photo' });
+        const caption = el('input', { value: p.caption, placeholder: 'Shown under the photo' });
+        const saveField = (name, input) => input.addEventListener('change', async () => {
+          try { await api('PATCH', `/photos/${p.id}`, { [name]: input.value }); p[name] = input.value; }
+          catch (err) { flash(err.message); }
+        });
+        saveField('alt', alt);
+        saveField('caption', caption);
+
+        const move = (dir) => async () => {
+          const j = i + dir;
+          if (j < 0 || j >= a.photos.length) return;
+          const order = a.photos.map((x) => x.id);
+          [order[i], order[j]] = [order[j], order[i]];
+          try {
+            await Promise.all(order.map((id, n) => api('PATCH', `/photos/${id}`, { sort: n + 1 })));
+            await loadAlbums();
+          } catch (err) { flash(err.message); }
+        };
+        const btn = (text, onclick, cls = 'ghost sm') => el('button', { type: 'button', className: cls, textContent: text, onclick });
+
+        return el('div', { className: 'photo-edit' },
+          el('a', { href: `${photosUrl}/albums/${a.slug}/d/${p.file}.webp`, target: '_blank' },
+            el('img', { src: thumbUrl(a.slug, p.file), alt: p.alt, loading: 'lazy' })),
+          el('div', { className: 'fields' },
+            el('label', {}, 'Alt text', alt),
+            el('label', {}, 'Caption', caption),
+            el('div', { className: 'row' },
+              btn('←', move(-1)), btn('→', move(1)),
+              p.id === coverId
+                ? el('span', { className: 'is-cover', textContent: '★ Cover' })
+                : btn('Make cover', async () => {
+                    try { await api('PATCH', `/albums/${a.slug}`, { cover_photo_id: p.id }); await loadAlbums(); }
+                    catch (err) { flash(err.message); }
+                  }),
+              btn('Delete', async () => {
+                if (!confirm('Delete this photo from the gallery? This can’t be undone.')) return;
+                try { await api('DELETE', `/photos/${p.id}`); await loadAlbums(); } catch (err) { flash(err.message); }
+              }, 'danger sm'))));
+      });
+
+      const back = el('button', { type: 'button', className: 'ghost sm', textContent: '← All albums', onclick: () => { openAlbum = null; renderAlbums(); } });
+      const delAlbum = el('button', { type: 'button', className: 'danger sm', textContent: 'Delete album', onclick: async () => {
+        if (!confirm(`Delete “${a.title}” and all ${a.photos.length} of its photos? This can't be undone.`)) return;
+        try { await api('DELETE', `/albums/${a.slug}`); openAlbum = null; await loadAlbums(); flash('Album deleted.'); }
+        catch (err) { flash(err.message); }
+      } });
+
+      return el('div', {},
+        el('div', { className: 'actions', style: 'margin:0 0 1rem' }, back, el('span', { style: 'flex:1' }),
+          el('a', { href: `https://w4trc.org/gallery/${a.slug}/`, target: '_blank', className: 'small', textContent: 'View on site ↗' })),
+        details,
+        el('h3', { textContent: `Photos (${a.photos.length})` }),
+        a.photos.length
+          ? el('div', { className: 'grid photo-grid' }, photos)
+          : el('p', { className: 'muted', textContent: 'No photos yet. Send some through /submit and approve them on the Review tab.' }),
+        el('div', { className: 'actions', style: 'margin-top:2rem' }, delAlbum));
+    }
+
+    getKey() ? start() : showLogin();
+  </script>
+</body>
+</html>
